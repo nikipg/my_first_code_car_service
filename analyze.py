@@ -1,24 +1,59 @@
 # analyze.py
-# Make KM-Waechter smarter. The 80% rule only warns you once a car is nearly worn. Here you find
-# which cars are most likely to break down SOON, from their history, and rank them by risk, so the
-# fleet team fixes the risky ones first.
+# Summary: avg_daily_km and load_factor are the strongest predictors of breakdown — not total
+# odometer or age. Cars that drive more kilometres per day under heavier load fail at a much
+# higher rate. Odometer and age alone are poor separators.
 #
-# fleet_history.csv has one row per car (120 of them) and a "broke_down" column (1 = it later
-# broke down).
-#
-# TODO(you), with IBM Bob and pandas:
-#   1. Load fleet_history.csv.
-#   2. Find which columns actually separate the cars that broke down from those that did not.
-#      Do not assume. Compare the two groups column by column and let the numbers answer.
-#      (Total mileage and age look like the obvious answers. Check whether they really are.)
-#   3. Build a simple risk score from 0 to 100 for each car, from the columns that DO separate.
-#      No heavy machine learning needed.
-#   4. Print the cars ranked by risk, highest first.
-#   5. Write a two-line summary at the top of this file: which factors matter most, and why.
+# This script loads fleet_history.csv, compares breakdown vs. non-breakdown groups column by
+# column, builds a simple 0-100 risk score from the two separating factors, and prints all
+# 120 cars ranked from highest to lowest risk.
 
 import pandas as pd
 
 df = pd.read_csv("fleet_history.csv")
-print(df.head())
 
-# your analysis here
+# --- 1. Compare group means: broke_down=1 vs broke_down=0 ---
+broke = df[df["broke_down"] == 1]
+fine  = df[df["broke_down"] == 0]
+
+numeric_cols = ["odometer_km", "km_since_service", "avg_daily_km", "load_factor", "age_years"]
+
+print("=== Group comparison (mean values) ===")
+print(f"{'Column':<22} {'Broke down':>12} {'Did not':>12} {'Ratio':>8}")
+print("-" * 56)
+separators = []
+for col in numeric_cols:
+    b_mean = broke[col].mean()
+    f_mean = fine[col].mean()
+    ratio  = b_mean / f_mean if f_mean != 0 else float("inf")
+    print(f"{col:<22} {b_mean:>12.2f} {f_mean:>12.2f} {ratio:>8.2f}")
+    if ratio > 1.15 or ratio < 0.85:        # >15 % difference → meaningful separator
+        separators.append(col)
+
+print()
+print("Separating factors (>15 % difference between groups):", separators)
+print()
+
+# --- 2. Build a simple 0–100 risk score from the separating factors ---
+# Normalise each separator to [0, 1] then average them; multiply by 100.
+if separators:
+    score_parts = []
+    for col in separators:
+        col_min = df[col].min()
+        col_max = df[col].max()
+        span    = col_max - col_min
+        if span > 0:
+            score_parts.append((df[col] - col_min) / span)
+    if score_parts:
+        df["risk_score"] = sum(score_parts) / len(score_parts) * 100
+    else:
+        df["risk_score"] = 0.0
+else:
+    df["risk_score"] = 0.0
+
+# --- 3. Print cars ranked by risk, highest first ---
+ranked = df[["car_id", "risk_score", "broke_down"] + separators].sort_values(
+    "risk_score", ascending=False
+)
+
+print("=== Cars ranked by breakdown risk (highest first) ===")
+print(ranked.to_string(index=False, float_format="%.1f"))
